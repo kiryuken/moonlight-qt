@@ -7,6 +7,7 @@ import StreamingPreferences 1.0
 import ComputerManager 1.0
 import SdlGamepadKeyNavigation 1.0
 import SystemProperties 1.0
+import AdaptivePreferences 1.0
 
 Flickable {
     id: settingsPage
