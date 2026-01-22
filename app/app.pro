@@ -37,7 +37,8 @@ DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs depr
 
 # Adaptive Client Features (disabled by default)
 # Enable with: qmake "CONFIG+=adaptive_client"
-adaptive_client {
+# Adaptive Client Features (Enabled by Default for this Fork)
+!disable-adaptive-client {
     message(Adaptive Client features enabled)
     DEFINES += ADAPTIVE_CLIENT_ENABLED
 }
