@@ -51,6 +51,7 @@
 #include "backend/systemproperties.h"
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
+#include "settings/adaptivepreferences.h"
 #include "gui/sdlgamepadkeynavigation.h"
 
 #if defined(Q_OS_WIN32)
@@ -851,6 +852,13 @@ int main(int argc, char *argv[])
                                                    [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
                                                        return StreamingPreferences::get(qmlEngine);
                                                    });
+#ifdef ADAPTIVE_CLIENT_ENABLED
+    qmlRegisterSingletonType<AdaptivePreferences>("AdaptivePreferences", 1, 0,
+                                                  "AdaptivePreferences",
+                                                  [](QQmlEngine*, QJSEngine*) -> QObject* {
+                                                      return AdaptivePreferences::get();
+                                                  });
+#endif
 
     // Create the identity manager on the main thread
     IdentityManager::get();

@@ -2,16 +2,32 @@
 
 #include "../../decoder.h"
 #include "../renderer.h"
+#include "../../../../settings/adaptivepreferences.h"
 
 #include <QQueue>
 #include <QMutex>
 #include <QWaitCondition>
 
-// The maximum number of frames pacer will ever hold is:
+// Default maximum number of frames pacer will ever hold is:
 // - 3 frames in the pacing queue
 // - 1 frame removed from the render queue in the process of rendering
 // - 1 frame for deferred free
-#define PACER_MAX_OUTSTANDING_FRAMES (3 + 1 + 1)
+#define PACER_DEFAULT_QUEUE_DEPTH 3
+
+#ifdef ADAPTIVE_CLIENT_ENABLED
+// Adaptive mode: configurable queue depth range
+#define ADAPTIVE_MIN_QUEUE_DEPTH 1
+#define ADAPTIVE_MAX_QUEUE_DEPTH 5
+#define PACER_ABSOLUTE_MAX_QUEUE_DEPTH ADAPTIVE_MAX_QUEUE_DEPTH
+#else
+#define PACER_ABSOLUTE_MAX_QUEUE_DEPTH PACER_DEFAULT_QUEUE_DEPTH
+#endif
+
+// Calculate frames for a specific queue depth
+#define PACER_OUTSTANDING_FRAMES_FOR_DEPTH(depth) ((depth) + 1 + 1)
+
+// Absolute maximum for allocation (used by ffmpeg.cpp)
+#define PACER_MAX_OUTSTANDING_FRAMES PACER_OUTSTANDING_FRAMES_FOR_DEPTH(PACER_ABSOLUTE_MAX_QUEUE_DEPTH)
 
 class IVsyncSource {
 public:
@@ -43,6 +59,13 @@ public:
 
     void renderOnMainThread();
 
+#ifdef ADAPTIVE_CLIENT_ENABLED
+    // Adaptive mode configuration
+    void setAdaptivePreferences(AdaptivePreferences* prefs);
+    void updateAdaptiveSettings();
+    int getEffectiveQueueDepth() const;
+#endif
+
 private:
     static int vsyncThread(void* context);
 
@@ -55,6 +78,10 @@ private:
     void renderFrame(AVFrame* frame);
 
     void dropFrameForEnqueue(QQueue<AVFrame*>& queue);
+
+#ifdef ADAPTIVE_CLIENT_ENABLED
+    AVFrame* dropFrameWithPolicy(QQueue<AVFrame*>& queue);
+#endif
 
     QQueue<AVFrame*> m_RenderQueue;
     QQueue<AVFrame*> m_PacingQueue;
@@ -75,4 +102,15 @@ private:
     int m_DisplayFps;
     PVIDEO_STATS m_VideoStats;
     int m_RendererAttributes;
+
+#ifdef ADAPTIVE_CLIENT_ENABLED
+    // Adaptive client state
+    AdaptivePreferences* m_AdaptivePrefs;
+    int m_ConfiguredQueueDepth;
+    AdaptivePreferences::FrameDropPolicy m_DropPolicy;
+    AVFrame* m_LastRenderedFrame;   // For frame repetition
+    uint64_t m_LastFrameArrivalTime; // Stall detection
+    bool m_StallDetected;
+    uint32_t m_FramesRepeated;       // Stats counter
+#endif
 };

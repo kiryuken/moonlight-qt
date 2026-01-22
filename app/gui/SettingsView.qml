@@ -848,6 +848,165 @@ Flickable {
             }
         }
 
+        // Adaptive Mode Settings (only visible when compiled with adaptive_client)
+        GroupBox {
+            id: adaptiveSettingsGroupBox
+            width: (parent.width - (parent.leftPadding + parent.rightPadding))
+            padding: 12
+            title: "<font color=\"orange\">" + qsTr("Adaptive Mode (Unstable Networks)") + "</font>"
+            font.pointSize: 12
+            visible: typeof AdaptivePreferences !== "undefined"
+
+            Column {
+                anchors.fill: parent
+                spacing: 5
+
+                CheckBox {
+                    id: adaptiveModeCheck
+                    width: parent.width
+                    hoverEnabled: true
+                    text: qsTr("Enable Adaptive Mode")
+                    font.pointSize: 12
+                    checked: typeof AdaptivePreferences !== "undefined" && AdaptivePreferences.adaptiveModeEnabled
+                    onCheckedChanged: {
+                        if (typeof AdaptivePreferences !== "undefined") {
+                            AdaptivePreferences.adaptiveModeEnabled = checked
+                        }
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Enables client-side adaptations for poor or unstable network connections")
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Optimization Target: ") +
+                          (adaptivePresetSlider.value === 0 ? qsTr("Lowest Latency") :
+                           adaptivePresetSlider.value === 1 ? qsTr("Balanced") :
+                                                              qsTr("Maximum Stability"))
+                    font.pointSize: 12
+                    visible: adaptiveModeCheck.checked
+                }
+
+                Slider {
+                    id: adaptivePresetSlider
+                    width: parent.width
+                    visible: adaptiveModeCheck.checked
+                    from: 0
+                    to: 2
+                    stepSize: 1
+                    snapMode: Slider.SnapAlways
+                    value: typeof AdaptivePreferences !== "undefined" ? AdaptivePreferences.networkPreset : 1
+                    onMoved: {
+                        if (typeof AdaptivePreferences !== "undefined") {
+                            AdaptivePreferences.applyNetworkPreset(value)
+                        }
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: adaptivePresetSlider.value === 0 ? qsTr("Minimizes buffer (Queue: 1 frame). Best for LAN. High risk of stutter on WiFi.") :
+                                  adaptivePresetSlider.value === 1 ? qsTr("Standard buffer (Queue: 3 frames). Good balance for stable WiFi.") :
+                                                                     qsTr("Maximizes buffer (Queue: 5 frames). High latency but resistant to jitter/spikes.")
+                }
+
+
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Advanced Settings")
+                    font.pointSize: 10
+                    font.bold: true
+                    wrapMode: Text.Wrap
+                    visible: adaptiveModeCheck.checked
+                    topPadding: 10
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Frame Drop Policy")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                    visible: adaptiveModeCheck.checked
+                }
+
+                AutoResizingComboBox {
+                    id: frameDropPolicyComboBox
+                    visible: adaptiveModeCheck.checked
+                    textRole: "text"
+                    model: ListModel {
+                        ListElement { text: qsTr("Drop Oldest"); val: 0 }
+                        ListElement { text: qsTr("Drop Newest"); val: 1 }
+                        ListElement { text: qsTr("Repeat Last Frame"); val: 2 }
+                    }
+
+                    Component.onCompleted: {
+                        if (typeof AdaptivePreferences !== "undefined") {
+                            currentIndex = AdaptivePreferences.frameDropPolicy
+                        }
+                    }
+
+                    onActivated: {
+                        if (typeof AdaptivePreferences !== "undefined") {
+                            AdaptivePreferences.frameDropPolicy = model.get(currentIndex).val
+                        }
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Controls how frames are dropped when the queue is full. 'Repeat Last Frame' can reduce visual glitches.")
+                }
+
+                Label {
+                    width: parent.width
+                    id: queueDepthLabel
+                    text: qsTr("Frame Queue Depth: ") + (typeof AdaptivePreferences !== "undefined" ? AdaptivePreferences.frameQueueDepth : 3)
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                    visible: adaptiveModeCheck.checked
+                }
+
+                Slider {
+                    id: queueDepthSlider
+                    visible: adaptiveModeCheck.checked
+                    width: parent.width
+                    from: 1
+                    to: 5
+                    stepSize: 1
+                    value: typeof AdaptivePreferences !== "undefined" ? AdaptivePreferences.frameQueueDepth : 3
+                    onValueChanged: {
+                        if (typeof AdaptivePreferences !== "undefined") {
+                            AdaptivePreferences.frameQueueDepth = value
+                        }
+                    }
+                }
+
+                CheckBox {
+                    id: inputSmoothingCheck
+                    width: parent.width
+                    visible: adaptiveModeCheck.checked
+                    hoverEnabled: true
+                    text: qsTr("Enable Input Smoothing")
+                    font.pointSize: 12
+                    checked: typeof AdaptivePreferences !== "undefined" && AdaptivePreferences.enableInputCoalescing
+                    onCheckedChanged: {
+                        if (typeof AdaptivePreferences !== "undefined") {
+                            AdaptivePreferences.enableInputCoalescing = checked
+                        }
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Coalesces mouse and gamepad input. Keyboard remains immediate.")
+                }
+            }
+        }
+
         GroupBox {
 
             id: audioSettingsGroupBox

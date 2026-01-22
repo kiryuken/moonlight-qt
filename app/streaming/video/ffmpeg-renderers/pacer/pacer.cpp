@@ -19,9 +19,8 @@
 // that the sum of all queued frames between both pacing and rendering queues
 // must not exceed the number buffer pool size to avoid running the decoder
 // out of available decoding surfaces.
-#define MAX_QUEUED_FRAMES 3
-static_assert(PACER_MAX_OUTSTANDING_FRAMES == MAX_QUEUED_FRAMES + 2,
-              "PACER_MAX_OUTSTANDING_FRAMES and MAX_QUEUED_FRAMES must agree");
+#define MAX_QUEUED_FRAMES PACER_DEFAULT_QUEUE_DEPTH
+// Note: With adaptive client, queue depth is configurable via m_ConfiguredQueueDepth
 
 // We may be woken up slightly late so don't go all the way
 // up to the next V-sync since we may accidentally step into
@@ -40,6 +39,15 @@ Pacer::Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats) :
     m_MaxVideoFps(0),
     m_DisplayFps(0),
     m_VideoStats(videoStats)
+#ifdef ADAPTIVE_CLIENT_ENABLED
+    , m_AdaptivePrefs(nullptr),
+    m_ConfiguredQueueDepth(PACER_DEFAULT_QUEUE_DEPTH),
+    m_DropPolicy(AdaptivePreferences::FDP_DROP_OLDEST),
+    m_LastRenderedFrame(nullptr),
+    m_LastFrameArrivalTime(0),
+    m_StallDetected(false),
+    m_FramesRepeated(0)
+#endif
 {
 
 }
@@ -80,6 +88,9 @@ Pacer::~Pacer()
         av_frame_free(&frame);
     }
     av_frame_free(&m_DeferredFreeFrame);
+#ifdef ADAPTIVE_CLIENT_ENABLED
+    av_frame_free(&m_LastRenderedFrame);
+#endif
 }
 
 void Pacer::renderOnMainThread()
@@ -338,7 +349,20 @@ void Pacer::renderFrame(AVFrame* frame)
 {
     // Count time spent in Pacer's queues
     uint64_t beforeRender = LiGetMicroseconds();
-    m_VideoStats->totalPacerTimeUs += (beforeRender - (uint64_t)frame->pkt_dts);
+    uint64_t pacerLatency = (beforeRender - (uint64_t)frame->pkt_dts);
+    m_VideoStats->totalPacerTimeUs += pacerLatency;
+
+#ifdef ADAPTIVE_CLIENT_ENABLED
+    if (m_AdaptivePrefs && m_AdaptivePrefs->showAdaptiveStats) {
+        // Log periodically or on high latency/queue depth events
+        static int logCounter = 0;
+        if (++logCounter % 60 == 0) { // Log roughly once per second at 60fps
+             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                         "Adaptive Pacer: Render (Unpace Latency: %llu us, Queue: %d)",
+                         (unsigned long long)pacerLatency, (int)m_RenderQueue.size());
+        }
+    }
+#endif
 
     // Render it
     m_VsyncRenderer->renderFrame(frame);
@@ -398,9 +422,18 @@ void Pacer::renderFrame(AVFrame* frame)
 
 void Pacer::dropFrameForEnqueue(QQueue<AVFrame*>& queue)
 {
-    SDL_assert(queue.size() <= MAX_QUEUED_FRAMES);
-    if (queue.size() == MAX_QUEUED_FRAMES) {
+#ifdef ADAPTIVE_CLIENT_ENABLED
+    int maxQueuedFrames = m_ConfiguredQueueDepth;
+#else
+    int maxQueuedFrames = MAX_QUEUED_FRAMES;
+#endif
+    SDL_assert(queue.size() <= maxQueuedFrames);
+    if (queue.size() == maxQueuedFrames) {
+#ifdef ADAPTIVE_CLIENT_ENABLED
+        AVFrame* frame = dropFrameWithPolicy(queue);
+#else
         AVFrame* frame = queue.dequeue();
+#endif
         av_frame_free(&frame);
     }
 }
@@ -422,3 +455,79 @@ void Pacer::submitFrame(AVFrame* frame)
         enqueueFrameForRenderingAndUnlock(frame);
     }
 }
+
+#ifdef ADAPTIVE_CLIENT_ENABLED
+
+AVFrame* Pacer::dropFrameWithPolicy(QQueue<AVFrame*>& queue)
+{
+    AVFrame* frame = nullptr;
+
+    switch (m_DropPolicy) {
+    case AdaptivePreferences::FDP_DROP_OLDEST:
+    default:
+        // Default behavior: drop oldest frame (FIFO)
+        frame = queue.dequeue();
+        break;
+
+    case AdaptivePreferences::FDP_DROP_NEWEST:
+        // Drop the newest frame (preserve older content for continuity)
+        frame = queue.takeLast();
+        break;
+
+    case AdaptivePreferences::FDP_REPEAT_LAST:
+        // Drop oldest but store for potential repetition
+        frame = queue.dequeue();
+        // Store a reference to this frame for repetition if needed
+        if (m_LastRenderedFrame != nullptr) {
+            av_frame_free(&m_LastRenderedFrame);
+        }
+        m_LastRenderedFrame = av_frame_clone(frame);
+        break;
+    }
+
+    if (m_AdaptivePrefs && m_AdaptivePrefs->showAdaptiveStats) {
+         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                     "Adaptive Pacer: Dropped frame using policy %d (Queue: %d/%d)",
+                     m_DropPolicy, (int)queue.size(), m_ConfiguredQueueDepth);
+    }
+
+    m_VideoStats->pacerDroppedFrames++;
+    return frame;
+}
+
+void Pacer::setAdaptivePreferences(AdaptivePreferences* prefs)
+{
+    m_AdaptivePrefs = prefs;
+    updateAdaptiveSettings();
+}
+
+void Pacer::updateAdaptiveSettings()
+{
+    if (m_AdaptivePrefs == nullptr) {
+        return;
+    }
+
+    if (!m_AdaptivePrefs->adaptiveModeEnabled) {
+        // Reset to defaults when adaptive mode is disabled
+        m_ConfiguredQueueDepth = PACER_DEFAULT_QUEUE_DEPTH;
+        m_DropPolicy = AdaptivePreferences::FDP_DROP_OLDEST;
+        return;
+    }
+
+    // Apply configured settings
+    m_ConfiguredQueueDepth = qBound(ADAPTIVE_MIN_QUEUE_DEPTH,
+                                     m_AdaptivePrefs->frameQueueDepth,
+                                     ADAPTIVE_MAX_QUEUE_DEPTH);
+    m_DropPolicy = m_AdaptivePrefs->frameDropPolicy;
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Adaptive Pacer: queue depth=%d, drop policy=%d",
+                m_ConfiguredQueueDepth, static_cast<int>(m_DropPolicy));
+}
+
+int Pacer::getEffectiveQueueDepth() const
+{
+    return m_ConfiguredQueueDepth;
+}
+
+#endif // ADAPTIVE_CLIENT_ENABLED
